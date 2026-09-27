@@ -86,7 +86,15 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
   const scanRoot = join(HOME, 'workspace')
   const ownedRepo = join(scanRoot, 'repo-one')
   fs.mkdirSync(join(ownedRepo, '.git'), { recursive: true })
-  fs.appendFileSync(PATCH, '- id: git\n  name: dsh-git\n  config:\n    scanRoot: ' + scanRoot + '\n    unlockMode: keyfile\n')
+  // A scaffolded profile patch ends in an empty `[]` placeholder, and a block
+  // item appended to that is not YAML — a fresh home must not fail the boot. So
+  // the placeholder is replaced when it is the whole body, and only a patch that
+  // already holds rows gets an append.
+  const row = '- id: git\n  name: dsh-git\n  config:\n    scanRoot: ' + scanRoot + '\n    unlockMode: keyfile\n'
+  const current = read(PATCH)
+  fs.writeFileSync(PATCH, /^\s*\[\s*\]\s*$/m.test(current)
+    ? current.replace(/^\s*\[\s*\]\s*$/m, row)
+    : current + (current.endsWith('\n') ? '' : '\n') + row)
   // A `safe.directory` entry this plugin must never touch, written before it boots.
   gitGlobal(['--add', 'safe.directory', FOREIGN_SAFE_DIRECTORY])
 
