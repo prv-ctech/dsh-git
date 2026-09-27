@@ -8,6 +8,20 @@ Entries below 1.0 follow [SemVer](https://semver.org/spec/v2.0.0.html): a
 breaking change ships as a **minor** bump, so read a minor as "may need a change
 on your side".
 
+## [0.2.1] - 2026-09-27
+
+No behavioural change. The plugin does what 0.2.0 did; this release carries the
+tooling and documentation that landed after it.
+
+### Changed
+
+- `lib/` is reformatted to the style the rest of the repo already uses — single
+  quotes, no semicolons, and quotes off object keys that do not need them.
+  Running the formatter over 0.2.0's `lib/` reproduces these files byte for byte,
+  so what ships here is the same program, not a rewrite of it.
+- The README documents rolling back: pin the tag before the one you are on. Every
+  release keeps its own tarball, so an older tag stays installable.
+
 ## [0.2.0] - 2026-09-27
 
 Breaking: ownership is now the only exception this plugin makes, and removing the
