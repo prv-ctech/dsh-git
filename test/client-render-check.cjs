@@ -29,46 +29,68 @@ const head = client.slice(0, factoryAt)
 const body = client.slice(factoryAt)
 /** The bundle's code with the stylesheet stripped: CSS is not a class reference. */
 const code = (() => {
-  const start = body.indexOf('const STYLES = `')
-  const end = body.indexOf('`;', start)
-  return start === -1 ? body : body.slice(0, start) + body.slice(end)
+  const open = 'const STYLES = `'
+  const start = body.indexOf(open)
+  if (start === -1) return body
+  const end = body.indexOf('`', start + open.length)
+  assert.notEqual(end, -1, 'the stylesheet template is unterminated')
+  return body.slice(0, start) + body.slice(end + 1)
 })()
-const keysOf = (text) => [...text.matchAll(/"([^"]+)":/g)].map(match => match[1]).sort()
+/**
+ * Object keys, quoted or bare. Anchored to the start of a line, because a bare
+ * word inside a translated sentence — "…and it refuses to push. Fix on the
+ * host:" — is prose, not a key.
+ */
+const keysOf = (text) =>
+  [...text.matchAll(/^[ \t]*(?:["']([^"'\n]+)["']|([A-Za-z_$][\w$]*))\s*:/gm)]
+    .map((match) => match[1] ?? match[2])
+    .sort()
+/** The object literal a `const <name> = {…}` declares, whatever the formatter did to it. */
 const blockOf = (name) => {
   const start = body.indexOf('const ' + name + ' = {')
-  const end = body.indexOf('};', start)
+  const end = body.indexOf('\n    }', start)
+  assert.notEqual(end, -1, 'no closing brace found for ' + name)
   return body.slice(start, end)
 }
 /** Translation calls, excluding method names that merely end in `t(`. */
-const requestedKeys = () => [...code.matchAll(/(?<![A-Za-z0-9_$.])t\("([^"]+)"\)/g)].map(match => match[1])
+const requestedKeys = () =>
+  [...code.matchAll(/(?<![A-Za-z0-9_$.])t\(["']([^"']+)["']\)/g)].map((match) => match[1])
 /** Every dgg- class the code mentions. */
-const referencedClasses = () => new Set(
-  [...code.matchAll(/"([^"]*\bdgg-[^"]*)"/g)]
-    .flatMap(match => match[1].split(/\s+/))
-    .filter(token => token.length > 0)
-    .map(token => token.replace(/^\./, '')),
-)
+const referencedClasses = () =>
+  new Set(
+    [...code.matchAll(/["']([^"']*\bdgg-[^"']*)["']/g)]
+      .flatMap((match) => match[1].split(/\s+/))
+      .filter((token) => token.length > 0)
+      .map((token) => token.replace(/^\./, '')),
+  )
 /** Every dgg- class the stylesheet declares. */
-const declaredClasses = () => new Set([...body.matchAll(/\.(dgg-[a-z0-9-]+)/g)].map(match => match[1]))
+const declaredClasses = () =>
+  new Set([...body.matchAll(/\.(dgg-[a-z0-9-]+)/g)].map((match) => match[1]))
 /** Fields the host state route answers, read off the route itself. */
 const stateFields = () => {
   const start = index.indexOf('const state = async () => {')
   const end = index.indexOf('\n  }', start)
-  return new Set([...index.slice(start, end).matchAll(/^\s+([A-Za-z][A-Za-z0-9]*):/gm)].map(match => match[1]))
+  return new Set(
+    [...index.slice(start, end).matchAll(/^\s+([A-Za-z][A-Za-z0-9]*):/gm)].map((match) => match[1]),
+  )
 }
 
 // ---- registration ----------------------------------------------------------
 check('the bundle registers itself under the package name', () => {
   assert.match(head, /__ModuleLoader__\.load\(\{/)
-  assert.match(head, /id:\s*"dsh-git"/)
+  assert.match(head, /id:\s*["']dsh-git["']/)
   assert.equal(manifest.name, 'dsh-git')
 })
 check('the registration only registers: react and the primitives load in the factory', () => {
   assert.match(client, /factory:\s*\(require\)\s*=>/)
-  assert.equal(/require\("react"\)/.test(head), false, 'react is required at load time')
-  assert.match(body, /require\("react"\)/)
-  assert.equal(/require\(["']dsh-client-ui-primitives/.test(head), false, 'the primitives are required at load time')
-  assert.match(body, /require\("@deepseek-ai\/dsh-client-ui-primitives"\)/)
+  assert.equal(/require\(["']react["']\)/.test(head), false, 'react is required at load time')
+  assert.match(body, /require\(["']react["']\)/)
+  assert.equal(
+    /require\(["']dsh-client-ui-primitives/.test(head),
+    false,
+    'the primitives are required at load time',
+  )
+  assert.match(body, /require\(["']@deepseek-ai\/dsh-client-ui-primitives["']\)/)
 })
 check('the factory exports apply and inject', () => {
   assert.match(body, /exports\.apply\s*=/)
@@ -78,20 +100,30 @@ check('the factory exports apply and inject', () => {
 check('inject names the four services the card needs, and no more', () => {
   const match = /const inject = \[([^\]]*)\]/.exec(body)
   assert.ok(match, 'no inject array')
-  const services = match[1].split(',').map(entry => entry.trim().replace(/^"|"$/g, '')).filter(Boolean).sort()
+  const services = match[1]
+    .split(',')
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+    .sort()
   assert.deepEqual(services, ['configForms', 'locale', 'remote', 'slots'])
 })
-check('the primitives are the shell\'s seeded module, not a dependency to install', () => {
+check("the primitives are the shell's seeded module, not a dependency to install", () => {
   // The web shell seeds this module beside react; every first-party settings
   // page requires it the same way and none of them declares it.
-  const declared = [...Object.keys(manifest.dependencies || {}), ...Object.keys(manifest.peerDependencies || {})]
-  assert.equal(declared.includes('@deepseek-ai/dsh-client-ui-primitives'), false,
-    'the primitives must not be declared: the shell seeds them')
+  const declared = [
+    ...Object.keys(manifest.dependencies || {}),
+    ...Object.keys(manifest.peerDependencies || {}),
+  ]
+  assert.equal(
+    declared.includes('@deepseek-ai/dsh-client-ui-primitives'),
+    false,
+    'the primitives must not be declared: the shell seeds them',
+  )
 })
 
 // ---- the namespace it speaks to -------------------------------------------
 check('the entry id equals the row id in the bundle patch', () => {
-  assert.match(body, /const ENTRY_ID = "git"/)
+  assert.match(body, /const ENTRY_ID = ["']git["']/)
   assert.match(patch, /- insert:\s*\n\s*- id: git\s*\n\s*name: dsh-git/)
   assert.equal((patch.match(/^\s*- id:/gm) || []).length, 1, 'the patch inserts more than one row')
 })
@@ -119,11 +151,13 @@ check('every declared key is requested', () => {
 // ---- styles ---------------------------------------------------------------
 check('every referenced CSS class is declared', () => {
   const declared = declaredClasses()
-  for (const token of referencedClasses()) assert.ok(declared.has(token), 'undeclared class: ' + token)
+  for (const token of referencedClasses())
+    assert.ok(declared.has(token), 'undeclared class: ' + token)
 })
 check('every declared CSS class is referenced', () => {
   const referenced = referencedClasses()
-  for (const token of declaredClasses()) assert.ok(referenced.has(token), 'unreferenced class: ' + token)
+  for (const token of declaredClasses())
+    assert.ok(referenced.has(token), 'unreferenced class: ' + token)
 })
 check('the stylesheet is injected as an effect scoped to this plugin', () => {
   assert.match(body, /ctx\.effect\(/)
@@ -133,23 +167,34 @@ check('the stylesheet is injected as an effect scoped to this plugin', () => {
 
 // ---- the page --------------------------------------------------------------
 check('the page is registered as its own settings.section tab', () => {
-  assert.match(body, /ctx\.slots\.inject\("settings\.section"/)
-  assert.match(body, /name:\s*"settings\.section"/)
+  assert.match(body, /ctx\.slots\.inject\(["']settings\.section["']/)
+  assert.match(body, /name:\s*["']settings\.section["']/)
   assert.match(body, /id:\s*ENTRY_ID/)
-  assert.match(body, /label:\s*\(\) => t\("nav"\)/)
+  assert.match(body, /label:\s*\(\) => t\(["']nav["']\)/)
   assert.match(body, /order:\s*\d+/)
   assert.match(body, /locale:\s*LOCALE_NS/)
-  assert.equal(body.includes('settings.general.item'), false, 'a General row registration is left over')
+  assert.equal(
+    body.includes('settings.general.item'),
+    false,
+    'a General row registration is left over',
+  )
 })
-check('the card is built from the harness\'s own settings components', () => {
-  for (const component of ['SettingsForm', 'SettingsFormModel', 'SettingsSecretField', 'StateDot', 'Button', 'DisclosureRow']) {
+check("the card is built from the harness's own settings components", () => {
+  for (const component of [
+    'SettingsForm',
+    'SettingsFormModel',
+    'SettingsSecretField',
+    'StateDot',
+    'Button',
+    'DisclosureRow',
+  ]) {
     assert.ok(body.includes(component), 'the native ' + component + ' is not used')
   }
-  assert.equal(/h\(\s*"input"/.test(body), false, 'the page still hand-rolls an input')
-  assert.equal(/h\(\s*"style"/.test(body), false, 'the page still hand-rolls chrome')
+  assert.equal(/h\(\s*["']input["']/.test(body), false, 'the page still hand-rolls an input')
+  assert.equal(/h\(\s*["']style["']/.test(body), false, 'the page still hand-rolls chrome')
 })
 check('the token is staged by the native form model, and saved by its save', () => {
-  assert.match(body, /new SettingsFormModel\(scope, \[\]/)
+  assert.match(body, /new SettingsFormModel\(\s*scope,\s*\[\]/)
   assert.match(body, /field:\s*TOKEN_FIELD,\s*write:\s*\(text\) => this\.writeToken\(text\)/)
   assert.match(body, /props\.edit\(TOKEN_FIELD, text\)/)
   assert.match(body, /hooks:\s*\{\s*gitCard:\s*this\.store\s*\}/)
@@ -158,43 +203,76 @@ check('the token is staged by the native form model, and saved by its save', () 
 })
 check('the token draft reaches the native write-only control and nothing else', () => {
   assert.match(body, /text:\s*state\.token\.text/)
-  assert.equal(/type:\s*"password"/.test(body), false, 'a hand-rolled password input is left over')
-  assert.equal((body.match(/React\.useState\(/g) || []).length, 1, 'React state must hold the disclosure toggle only')
+  assert.equal(
+    /type:\s*["']password["']/.test(body),
+    false,
+    'a hand-rolled password input is left over',
+  )
+  assert.equal(
+    (body.match(/React\.useState\(/g) || []).length,
+    1,
+    'React state must hold the disclosure toggle only',
+  )
   assert.match(body, /post\(API\.token, \{ token: text \}\)/)
 })
 check('the details are folded away in the native disclosure row', () => {
   assert.match(body, /h\(\s*DisclosureRow/)
-  assert.match(body, /title:\s*t\("details\.title"\)/)
+  assert.match(body, /title:\s*t\(["']details\.title["']\)/)
   assert.match(body, /expandOnRowClick:\s*true/)
 })
 check('the ownership block offers the host command, not a git-config write', () => {
   assert.match(body, /status\.ownership/)
-  assert.match(body, /"chown -R " \+ ownership\.user/)
+  assert.match(body, /["']chown -R ["'] \+ ownership\.user/)
   assert.match(body, /misowned\.map\(\(row\) => row\.path\)/)
 })
 check('there is no unlock mode, passphrase or safe.directory left in the browser half', () => {
-  assert.equal(/unlock|passphrase|safe\.directory|TRUST_ALL/u.test(body), false, 'a removed feature is still referenced')
+  assert.equal(
+    /unlock|passphrase|safe\.directory|TRUST_ALL/u.test(body),
+    false,
+    'a removed feature is still referenced',
+  )
 })
 
 // ---- nothing here can read a secret back ----------------------------------
 check('every host field the card reads is one the state route actually answers', () => {
   const answered = stateFields()
-  assert.ok(answered.size >= 10, 'the state route answers too little to compare: ' + [...answered].join(','))
+  assert.ok(
+    answered.size >= 10,
+    'the state route answers too little to compare: ' + [...answered].join(','),
+  )
   // A quoted `"status.ready"` is a dictionary key, not a host field read.
-  const reads = new Set([...body.matchAll(/(?<!["'\w.])status\.([A-Za-z][A-Za-z0-9]*)/g)].map(match => match[1]))
+  const reads = new Set(
+    [...body.matchAll(/(?<!["'\w.])status\.([A-Za-z][A-Za-z0-9]*)/g)].map((match) => match[1]),
+  )
   assert.ok(reads.size > 0, 'the card reads no host state at all')
-  for (const field of reads) assert.ok(answered.has(field), 'the card reads an unanswered field: ' + field)
+  for (const field of reads)
+    assert.ok(answered.has(field), 'the card reads an unanswered field: ' + field)
 })
 check('no host field the card reads can carry a secret', () => {
-  const reads = [...body.matchAll(/(?<!["'\w.])status\.([A-Za-z][A-Za-z0-9]*)/g)].map(match => match[1])
-  for (const field of reads) assert.equal(/token|passphrase|secret|password/i.test(field), false, 'secret-bearing field: ' + field)
+  const reads = [...body.matchAll(/(?<!["'\w.])status\.([A-Za-z][A-Za-z0-9]*)/g)].map(
+    (match) => match[1],
+  )
+  for (const field of reads)
+    assert.equal(
+      /token|passphrase|secret|password/i.test(field),
+      false,
+      'secret-bearing field: ' + field,
+    )
 })
-check('every request goes to this plugin\'s own routes, with the cookie', () => {
-  const paths = [...body.matchAll(/["'](\/api\/[^"']+)["']/g)].map(match => match[1])
-  assert.deepEqual([...new Set(paths)].sort(),
-    ['/api/dsh-git.forget', '/api/dsh-git.state', '/api/dsh-git.token'])
-  for (const path of paths) assert.ok(index.includes("path: '" + path + "'"), 'no such host route: ' + path)
-  assert.equal((body.match(/credentials:\s*"include"/g) || []).length, 2, 'the state and POST helpers must both send the cookie')
+check("every request goes to this plugin's own routes, with the cookie", () => {
+  const paths = [...body.matchAll(/["'](\/api\/[^"']+)["']/g)].map((match) => match[1])
+  assert.deepEqual([...new Set(paths)].sort(), [
+    '/api/dsh-git.forget',
+    '/api/dsh-git.state',
+    '/api/dsh-git.token',
+  ])
+  for (const path of paths)
+    assert.ok(index.includes("path: '" + path + "'"), 'no such host route: ' + path)
+  assert.equal(
+    (body.match(/credentials:\s*["']include["']/g) || []).length,
+    2,
+    'the state and POST helpers must both send the cookie',
+  )
 })
 
 // ---- the page, executed ----------------------------------------------------
@@ -204,7 +282,13 @@ check('every request goes to this plugin\'s own routes, with the cookie', () => 
 // different branches.
 function loadPage() {
   let registration = null
-  new Function('window', client)({ __ModuleLoader__: { load: (spec) => { registration = spec } } })
+  new Function('window', client)({
+    __ModuleLoader__: {
+      load: (spec) => {
+        registration = spec
+      },
+    },
+  })
   assert.equal(registration.id, 'dsh-git')
   const React = {
     createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
@@ -223,7 +307,14 @@ function loadPage() {
         return { set: () => {} }
       }
       shell() {
-        return { available: true, writable: true, dirty: false, invalid: false, saving: false, failed: false }
+        return {
+          available: true,
+          writable: true,
+          dirty: false,
+          invalid: false,
+          saving: false,
+          failed: false,
+        }
       }
       field() {
         return { text: '', overridden: false, invalid: false }
@@ -241,11 +332,15 @@ function loadPage() {
   })
   let tab = null
   module.apply({
-    effect: (fn) => { fn() },
+    effect: (fn) => {
+      fn()
+    },
     locale: { register: () => {}, bind: () => (key) => key },
     slots: {
       inject: (name, fn) => fn(),
-      register: (spec, component) => { tab = { spec, component } },
+      register: (spec, component) => {
+        tab = { spec, component }
+      },
     },
     configForms: {
       get: () => ({
@@ -310,14 +405,15 @@ const projection = (hostStatus, extra = {}) => ({
   error: null,
   ...extra,
 })
-const render = (state, handlers = {}) => page.component({
-  t: (key) => key,
-  useGitCard: (select) => select(state),
-  save: handlers.save || (() => {}),
-  discard: handlers.discard || (() => {}),
-  edit: handlers.edit || (() => {}),
-  forget: handlers.forget || (() => {}),
-})
+const render = (state, handlers = {}) =>
+  page.component({
+    t: (key) => key,
+    useGitCard: (select) => select(state),
+    save: handlers.save || (() => {}),
+    discard: handlers.discard || (() => {}),
+    edit: handlers.edit || (() => {}),
+    forget: handlers.forget || (() => {}),
+  })
 
 check('the page registers one settings.section tab under the entry id', () => {
   assert.equal(page.spec.name, 'settings.section')
@@ -328,8 +424,24 @@ check('the page registers one settings.section tab under the entry id', () => {
 })
 check('the page renders, and says what the host reported', () => {
   assert.ok(texts(render(projection(status()))).includes('status.ready'))
-  assert.ok(texts(render(projection(status({ configured: false, readable: false, keyFile: { path: '/home/.dsh/dsh-git.key', exists: false, mode: null, safe: false } })))).includes('status.none'))
-  assert.ok(texts(render(projection(status({ readable: false, error: 'wrong key' })))).includes('status.unreadable'))
+  assert.ok(
+    texts(
+      render(
+        projection(
+          status({
+            configured: false,
+            readable: false,
+            keyFile: { path: '/home/.dsh/dsh-git.key', exists: false, mode: null, safe: false },
+          }),
+        ),
+      ),
+    ).includes('status.none'),
+  )
+  assert.ok(
+    texts(render(projection(status({ readable: false, error: 'wrong key' })))).includes(
+      'status.unreadable',
+    ),
+  )
   const unreachable = texts(render(projection(null)))
   assert.ok(unreachable.includes('status.unknown'))
   assert.ok(unreachable.includes('unavailable'))
@@ -348,11 +460,12 @@ check('the token control is the native one, told what the host said', () => {
   assert.equal(ready.stateLabel, 'token.set')
   assert.equal(ready.disabled, false)
   assert.equal(ready.text, '')
-  const none = findAll(render(projection(status({ configured: false }))), 'SettingsSecretField')[0].props
+  const none = findAll(render(projection(status({ configured: false }))), 'SettingsSecretField')[0]
+    .props
   assert.equal(none.configured, false)
   assert.equal(none.stateLabel, 'token.unset')
 })
-check('the native form is handed the state and the slot\'s own save and discard', () => {
+check("the native form is handed the state and the slot's own save and discard", () => {
   const save = () => {}
   const discard = () => {}
   const form = findAll(render(projection(status()), { save, discard }), 'SettingsForm')[0].props
@@ -364,26 +477,67 @@ check('the native form is handed the state and the slot\'s own save and discard'
 })
 check('the delete button is offered only while a record exists, and calls forget', () => {
   let forgotten = 0
-  const button = findAll(render(projection(status()), { forget: () => { forgotten += 1 } }), 'Button')[0]
+  const button = findAll(
+    render(projection(status()), {
+      forget: () => {
+        forgotten += 1
+      },
+    }),
+    'Button',
+  )[0]
   assert.equal(button.props.disabled, false)
   button.props.onClick()
   assert.equal(forgotten, 1)
-  assert.equal(findAll(render(projection(status({ configured: false }))), 'Button')[0].props.disabled, true)
+  assert.equal(
+    findAll(render(projection(status({ configured: false }))), 'Button')[0].props.disabled,
+    true,
+  )
 })
-check('the ownership line is the fix when a repository is foreign-owned, and quiet when it is not', () => {
-  const foreign = texts(render(projection(status({
-    ownership: { root: '/workspace', exists: true, user: '99:100', checked: 2, misowned: [{ path: '/workspace/other', uid: 0, gid: 0, mode: '755' }] },
-  }))))
-  assert.ok(foreign.includes('own.problem'), JSON.stringify(foreign))
-  assert.ok(foreign.includes('chown -R 99:100 /workspace/other'), JSON.stringify(foreign))
-  const clean = texts(render(projection(status())))
-  assert.ok(clean.includes('own.clean'), JSON.stringify(clean))
-  assert.equal(clean.some((line) => line.startsWith('chown')), false)
-  const absent = texts(render(projection(status({ ownership: { root: '/none', exists: false, user: '99:100', checked: 0, misowned: [] } }))))
-  assert.ok(absent.includes('own.missing'), JSON.stringify(absent))
-  // No report at all (say a host half that predates the scan) renders nothing.
-  assert.equal(texts(render(projection(status({ ownership: undefined })))).some((line) => line.startsWith('own.')), false)
-})
+check(
+  'the ownership line is the fix when a repository is foreign-owned, and quiet when it is not',
+  () => {
+    const foreign = texts(
+      render(
+        projection(
+          status({
+            ownership: {
+              root: '/workspace',
+              exists: true,
+              user: '99:100',
+              checked: 2,
+              misowned: [{ path: '/workspace/other', uid: 0, gid: 0, mode: '755' }],
+            },
+          }),
+        ),
+      ),
+    )
+    assert.ok(foreign.includes('own.problem'), JSON.stringify(foreign))
+    assert.ok(foreign.includes('chown -R 99:100 /workspace/other'), JSON.stringify(foreign))
+    const clean = texts(render(projection(status())))
+    assert.ok(clean.includes('own.clean'), JSON.stringify(clean))
+    assert.equal(
+      clean.some((line) => line.startsWith('chown')),
+      false,
+    )
+    const absent = texts(
+      render(
+        projection(
+          status({
+            ownership: { root: '/none', exists: false, user: '99:100', checked: 0, misowned: [] },
+          }),
+        ),
+      ),
+    )
+    assert.ok(absent.includes('own.missing'), JSON.stringify(absent))
+    // No report at all (say a host half that predates the scan) renders nothing.
+    assert.equal(
+      texts(render(projection(status({ ownership: undefined })))).some((line) =>
+        line.startsWith('own.'),
+      ),
+      false,
+    )
+  },
+)
 check('the technical facts are folded away in the native disclosure row', () => {
   const details = findAll(render(projection(status())), 'DisclosureRow')[0]
   assert.equal(details.props.open, false)
@@ -391,7 +545,10 @@ check('the technical facts are folded away in the native disclosure row', () => 
   assert.equal(details.props.title, 'details.title')
   const lines = texts(details)
   assert.ok(lines.includes('dsh-git/github'), JSON.stringify(lines))
-  assert.ok(lines.some((line) => line.includes('credhelper.cjs')), JSON.stringify(lines))
+  assert.ok(
+    lines.some((line) => line.includes('credhelper.cjs')),
+    JSON.stringify(lines),
+  )
 })
 
 let failed = 0
@@ -399,5 +556,12 @@ for (const [label, ok, message] of checks) {
   if (!ok) failed += 1
   console.log((ok ? 'PASS  ' : 'FAIL  ') + label + (ok ? '' : '  <- ' + message))
 }
-console.log('\nchecks:', checks.length, '| css classes:', declaredClasses().size, '| dictionary keys:', keysOf(blockOf('zh')).length)
+console.log(
+  '\nchecks:',
+  checks.length,
+  '| css classes:',
+  declaredClasses().size,
+  '| dictionary keys:',
+  keysOf(blockOf('zh')).length,
+)
 process.exit(failed === 0 ? 0 : 1)

@@ -27,7 +27,7 @@ const BASE = 'http://127.0.0.1:' + PORT
 const TOKEN = 'ghp_reboot_do_not_use_0123456789abcdef'
 const HELPER = join(REPO, 'lib', 'credhelper.cjs')
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const read = (path) => fs.readFileSync(path, 'utf8')
 
 const checks = []
@@ -40,8 +40,12 @@ const boot = async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let out = ''
-  child.stdout.on('data', d => { out += d })
-  child.stderr.on('data', d => { out += d })
+  child.stdout.on('data', (d) => {
+    out += d
+  })
+  child.stderr.on('data', (d) => {
+    out += d
+  })
   let token = null
   const deadline = Date.now() + 120000
   while (token === null && Date.now() < deadline) {
@@ -50,38 +54,54 @@ const boot = async () => {
     if (m) token = m[1]
   }
   if (token === null) throw new Error('verification instance never printed a token:\n' + out)
-  const cookie = (await fetch(BASE + '/?token=' + encodeURIComponent(token), { redirect: 'manual' }))
-    .headers.getSetCookie()[0].split(';')[0]
+  const cookie = (
+    await fetch(BASE + '/?token=' + encodeURIComponent(token), { redirect: 'manual' })
+  ).headers
+    .getSetCookie()[0]
+    .split(';')[0]
   const call = async (path, init) => {
     const response = await fetch(BASE + path, {
       ...init,
-      headers: { cookie, 'content-type': 'application/json', ...((init && init.headers) || {}) },
+      headers: { cookie, 'content-type': 'application/json', ...init?.headers },
     })
     return { status: response.status, body: await response.json().catch(() => null) }
   }
   return {
-    child, out,
+    child,
+    out,
     state: () => call('/api/dsh-git.state'),
-    store: () => call('/api/dsh-git.token', { method: 'POST', body: JSON.stringify({ token: TOKEN }) }),
-    stop: async () => { child.kill('SIGTERM'); await sleep(1500) },
+    store: () =>
+      call('/api/dsh-git.token', { method: 'POST', body: JSON.stringify({ token: TOKEN }) }),
+    stop: async () => {
+      child.kill('SIGTERM')
+      await sleep(1500)
+    },
   }
 }
 
 /** Ask the helper, without printing the answer's secret. */
-const helper = (socketPath) => spawnSync(
-  process.execPath, [HELPER, '--socket', socketPath, 'get'],
-  { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8' },
-)
+const helper = (socketPath) =>
+  spawnSync(process.execPath, [HELPER, '--socket', socketPath, 'get'], {
+    input: 'protocol=https\nhost=github.com\n\n',
+    encoding: 'utf8',
+  })
 
 ;(async () => {
   fs.rmSync(HOME, { recursive: true, force: true })
   fs.mkdirSync(HOME, { recursive: true })
-  fs.cpSync(join(SOURCE, 'profiles'), join(HOME, 'profiles'), { recursive: true, dereference: false })
-  try { fs.copyFileSync(join(SOURCE, '.credentials.yaml'), join(HOME, '.credentials.yaml')) } catch { /* the instance mints its own */ }
+  fs.cpSync(join(SOURCE, 'profiles'), join(HOME, 'profiles'), {
+    recursive: true,
+    dereference: false,
+  })
+  try {
+    fs.copyFileSync(join(SOURCE, '.credentials.yaml'), join(HOME, '.credentials.yaml'))
+  } catch {
+    /* the instance mints its own */
+  }
 
   const manifestPath = join(PROFILE, 'package.json')
   const manifest = JSON.parse(read(manifestPath))
-  manifest.dependencies = { ...(manifest.dependencies || {}), 'dsh-git': 'link:' + REPO }
+  manifest.dependencies = { ...manifest.dependencies, 'dsh-git': 'link:' + REPO }
   const bundles = manifest.dsh.profile.bundles
   if (!bundles.includes('dsh-git')) bundles.push('dsh-git')
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
@@ -95,25 +115,36 @@ const helper = (socketPath) => spawnSync(
     const stored = await one.store()
     const stateOne = await one.state()
     const answerOne = helper(stateOne.body.socketPath)
-    record('boot one stores the token and the helper answers it',
-      stored.status === 200 && stateOne.body.readable === true
-      && answerOne.stdout.includes('password=' + TOKEN),
-      stored.status + ' ' + JSON.stringify(answerOne.stdout.slice(0, 60)))
+    record(
+      'boot one stores the token and the helper answers it',
+      stored.status === 200 &&
+        stateOne.body.readable === true &&
+        answerOne.stdout.includes('password=' + TOKEN),
+      stored.status + ' ' + JSON.stringify(answerOne.stdout.slice(0, 60)),
+    )
     await one.stop()
 
     // ---- boot two: same home, same record, no write in between ------------
     const two = await boot()
     const stateTwo = await two.state()
     const answerTwo = helper(stateTwo.body.socketPath)
-    record('boot two still reports the vault configured and readable',
+    record(
+      'boot two still reports the vault configured and readable',
       stateTwo.body.configured === true && stateTwo.body.readable === true,
-      JSON.stringify(stateTwo.body).slice(0, 200))
-    record('boot two serves the same credential over the socket',
+      JSON.stringify(stateTwo.body).slice(0, 200),
+    )
+    record(
+      'boot two serves the same credential over the socket',
       answerTwo.stdout.includes('password=' + TOKEN),
-      JSON.stringify(answerTwo.stdout.slice(0, 60)) + ' stderr:' + JSON.stringify(answerTwo.stderr))
+      JSON.stringify(answerTwo.stdout.slice(0, 60)) + ' stderr:' + JSON.stringify(answerTwo.stderr),
+    )
     await two.stop()
   } catch (error) {
-    record('the run itself finished without throwing', false, (error && error.message) || String(error))
+    record(
+      'the run itself finished without throwing',
+      false,
+      (error && error.message) || String(error),
+    )
   }
 
   let failed = 0

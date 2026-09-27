@@ -10,7 +10,7 @@
 //   node test/uninstall-check.cjs
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } = require('node:fs')
+const { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 
@@ -23,7 +23,7 @@ const checkAsync = async (label, fn) => {
     checks.push([label, false, error.message])
   }
 }
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** Wait for a condition, so a poll that fires late is not a flake. */
 async function until(describe, predicate, timeoutMs = 6_000) {
   const deadline = Date.now() + timeoutMs
@@ -46,8 +46,14 @@ const FOREIGN = '!node /opt/other-tool/helper.cjs'
 const HOMES = []
 const helperEntries = () => {
   try {
-    return execFileSync('git', ['config', '--global', '--get-all', 'credential.https://github.com.helper'], { encoding: 'utf8' })
-      .split('\n').map(line => line.trim()).filter(Boolean)
+    return execFileSync(
+      'git',
+      ['config', '--global', '--get-all', 'credential.https://github.com.helper'],
+      { encoding: 'utf8' },
+    )
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
   } catch {
     return [] // the key is simply absent
   }
@@ -69,12 +75,20 @@ async function fixture({ installed = true, managed = true } = {}) {
   const packageDir = join(profile, 'node_modules', 'dsh-git')
   if (installed) mkdirSync(packageDir, { recursive: true })
   const gitconfig = join(HOME, 'gitconfig')
-  const previous = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_SYSTEM, home: process.env.DSH_HOME }
+  const previous = {
+    global: process.env.GIT_CONFIG_GLOBAL,
+    system: process.env.GIT_CONFIG_SYSTEM,
+    home: process.env.DSH_HOME,
+  }
   process.env.GIT_CONFIG_GLOBAL = gitconfig
   process.env.GIT_CONFIG_SYSTEM = '/dev/null'
   process.env.DSH_HOME = HOME
   // Another tool's helper for the same host: cleanup must leave it standing.
-  execFileSync('git', ['config', '--global', '--add', 'credential.https://github.com.helper', FOREIGN], { encoding: 'utf8' })
+  execFileSync(
+    'git',
+    ['config', '--global', '--add', 'credential.https://github.com.helper', FOREIGN],
+    { encoding: 'utf8' },
+  )
 
   const log = []
   const records = new Map()
@@ -93,14 +107,23 @@ async function fixture({ installed = true, managed = true } = {}) {
         if (next !== undefined) records.set(key, next)
         return records.get(key)
       },
-      deleteRecord: async (key) => { records.delete(key) },
+      deleteRecord: async (key) => {
+        records.delete(key)
+      },
     },
-    connection: { fetch: { register: (route) => { routes.push(route); return () => {} } } },
+    connection: {
+      fetch: {
+        register: (route) => {
+          routes.push(route)
+          return () => {}
+        },
+      },
+    },
   }
   const ctx = {
     logger,
     inject: (deps, callback) => {
-      for (const dep of deps) callback({ ...services, logger })
+      for (const _dep of deps) callback({ ...services, logger })
     },
     on: () => {},
     effect: (fn) => {
@@ -122,11 +145,13 @@ async function fixture({ installed = true, managed = true } = {}) {
   const post = async (path, body) => {
     const definition = routes.find((entry) => entry.path === path)
     if (definition === undefined) throw new Error('no route registered at ' + path)
-    const response = await definition.fetch(new Request('http://127.0.0.1' + path, {
-      method: 'POST',
-      body: JSON.stringify(body || {}),
-      headers: { 'content-type': 'application/json' },
-    }))
+    const response = await definition.fetch(
+      new Request('http://127.0.0.1' + path, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
     return { status: response.status, body: await response.json() }
   }
 
@@ -139,10 +164,12 @@ async function fixture({ installed = true, managed = true } = {}) {
     records,
     post,
     helperEntries,
-    installedHelper: () => helperEntries().filter(entry => entry.includes('credhelper.cjs')),
+    installedHelper: () => helperEntries().filter((entry) => entry.includes('credhelper.cjs')),
     uninstall: () => rmSync(packageDir, { recursive: true, force: true }),
     /** What the Loader does on unload: every effect's disposer, in order. */
-    dispose: () => { for (const disposer of disposers) disposer() },
+    dispose: () => {
+      for (const disposer of disposers) disposer()
+    },
     /** Hand the process back to the next fixture; the home stays until the end. */
     cleanup: () => {
       process.env.GIT_CONFIG_GLOBAL = previous.global
@@ -185,21 +212,34 @@ async function fixture({ installed = true, managed = true } = {}) {
     assert.equal(stored.status, 200)
     assert.equal(statSync(gone.keyFile).mode & 0o777, 0o600)
     assert.equal(gone.installedHelper().length, 1, 'the helper entry was not written')
-    assert.deepEqual(gone.helperEntries().length, 2, 'the seeded entry and this plugin’s were expected')
+    assert.deepEqual(
+      gone.helperEntries().length,
+      2,
+      'the seeded entry and this plugin’s were expected',
+    )
   })
-  await checkAsync('an uninstall removes the record, the key file, and our helper entry', async () => {
-    gone.uninstall()
-    gone.dispose()
-    await until('the uninstall cleanup', () => gone.records.has('dsh-git/github') === false)
-    await until('the helper entry to go', () => gone.installedHelper().length === 0)
-    assert.equal(existsSync(gone.keyFile), false, 'the key file survived the uninstall')
-    assert.equal(gone.records.has('dsh-git/github'), false, 'the credential record survived the uninstall')
-  })
+  await checkAsync(
+    'an uninstall removes the record, the key file, and our helper entry',
+    async () => {
+      gone.uninstall()
+      gone.dispose()
+      await until('the uninstall cleanup', () => gone.records.has('dsh-git/github') === false)
+      await until('the helper entry to go', () => gone.installedHelper().length === 0)
+      assert.equal(existsSync(gone.keyFile), false, 'the key file survived the uninstall')
+      assert.equal(
+        gone.records.has('dsh-git/github'),
+        false,
+        'the credential record survived the uninstall',
+      )
+    },
+  )
   await checkAsync('another tool’s helper entry for the same host survives', () => {
     assert.deepEqual(gone.helperEntries(), [FOREIGN])
   })
   await checkAsync('the uninstall is reported in the log', () => {
-    const line = gone.log.filter(([level, text]) => level === 'info' && text.includes('uninstalled')).pop()
+    const line = gone.log
+      .filter(([level, text]) => level === 'info' && text.includes('uninstalled'))
+      .pop()
     assert.ok(line, 'no uninstall line was logged')
     assert.match(line[1], /git helper entry/, JSON.stringify(gone.log, null, 1))
     assert.match(line[1], /key file/)
@@ -222,7 +262,11 @@ async function fixture({ installed = true, managed = true } = {}) {
     bare.uninstall()
     bare.dispose()
     await sleep(1_600)
-    assert.equal(bare.records.has('dsh-git/github'), true, 'a composition without a profile cleaned up anyway')
+    assert.equal(
+      bare.records.has('dsh-git/github'),
+      true,
+      'a composition without a profile cleaned up anyway',
+    )
     assert.equal(existsSync(bare.keyFile), true)
     assert.equal(bare.installedHelper().length, 1)
   })

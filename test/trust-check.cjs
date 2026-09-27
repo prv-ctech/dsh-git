@@ -26,7 +26,9 @@ const check = (label, fn) => {
 
 // ---- a workspace to scan ---------------------------------------------------
 const ROOT = join(HOME, 'workspace')
-const repoAt = (relative) => { mkdirSync(join(ROOT, relative, '.git'), { recursive: true }) }
+const repoAt = (relative) => {
+  mkdirSync(join(ROOT, relative, '.git'), { recursive: true })
+}
 repoAt('repo-a')
 repoAt('group/repo-b')
 // Skipped on purpose: a dependency tree, a dot-directory, and a depth beyond
@@ -80,7 +82,10 @@ const FOUND = [join(ROOT, 'group', 'repo-b'), join(ROOT, 'repo-a'), join(ROOT, '
     const stranger = process.getuid() + 1
     const report = ownershipReport(ROOT, { uid: stranger, gid: process.getgid() })
     assert.equal(report.checked, 3)
-    assert.deepEqual(report.misowned.map((row) => row.path), FOUND)
+    assert.deepEqual(
+      report.misowned.map((row) => row.path),
+      FOUND,
+    )
     assert.equal(report.user, stranger + ':' + process.getgid())
     for (const row of report.misowned) {
       assert.equal(row.uid, process.getuid())

@@ -72,7 +72,7 @@ and delete the `dsh-git/github:` entry under `records:` in
 ## Notes
 
 - Any process running as you can read the key file and the record. The point is
-  keeping secrets out of *model context* and *git's own storage*, not out of your
+  keeping secrets out of _model context_ and _git's own storage_, not out of your
   account.
 - Lose the key file and the stored token is unreadable; saving the token again is
   the only fix, by design.

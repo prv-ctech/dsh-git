@@ -36,7 +36,7 @@ const checkAsync = async (label, fn) => {
     checks.push([label, false, error.message])
   }
 }
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let bootCount = 0
 /**
@@ -65,7 +65,9 @@ async function boot(overrides = {}) {
       if (next !== undefined) records.set(key, next)
       return records.get(key)
     },
-    deleteRecord: async (key) => { records.delete(key) },
+    deleteRecord: async (key) => {
+      records.delete(key)
+    },
   }
 
   const childFor = (service) => {
@@ -73,7 +75,14 @@ async function boot(overrides = {}) {
     if (service === 'credentials') return { credentials, logger: rootCtx.logger }
     if (service === 'connection') {
       return {
-        connection: { fetch: { register: (route) => { registered.routes.push(route); return () => {} } } },
+        connection: {
+          fetch: {
+            register: (route) => {
+              registered.routes.push(route)
+              return () => {}
+            },
+          },
+        },
         logger: rootCtx.logger,
       }
     }
@@ -86,7 +95,9 @@ async function boot(overrides = {}) {
       warn: (...args) => log.push(['warn', args.join(' ')]),
       error: (...args) => log.push(['error', args.join(' ')]),
     },
-    inject: (deps, callback) => { for (const dep of deps) callback(childFor(dep)) },
+    inject: (deps, callback) => {
+      for (const dep of deps) callback(childFor(dep))
+    },
     on: () => {},
     effect: (fn) => {
       const disposer = fn()
@@ -104,14 +115,19 @@ async function boot(overrides = {}) {
     const response = await definition.fetch(new Request('http://127.0.0.1:3080' + path, init))
     const text = await response.text()
     let body = null
-    try { body = JSON.parse(text) } catch { /* the refusal paths still answer JSON */ }
+    try {
+      body = JSON.parse(text)
+    } catch {
+      /* the refusal paths still answer JSON */
+    }
     return { status: response.status, body, text }
   }
-  const post = (path, body) => call(path, {
-    method: 'POST',
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-    headers: { 'content-type': 'application/json' },
-  })
+  const post = (path, body) =>
+    call(path, {
+      method: 'POST',
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+    })
 
   return {
     mod,
@@ -123,7 +139,9 @@ async function boot(overrides = {}) {
     call,
     post,
     state: async () => (await call('/api/dsh-git.state')).body,
-    dispose: () => { for (const disposer of registered.effects) disposer() },
+    dispose: () => {
+      for (const disposer of registered.effects) disposer()
+    },
   }
 }
 
@@ -136,8 +154,10 @@ async function boot(overrides = {}) {
   // ---- the schema ----------------------------------------------------------
   const plain = Config({})
   check('Config declares the six documented fields', () => {
-    assert.deepEqual(Object.keys(plain).sort(),
-      ['host', 'keyFile', 'manageGitConfig', 'scanRoot', 'socketPath', 'username'].sort())
+    assert.deepEqual(
+      Object.keys(plain).sort(),
+      ['host', 'keyFile', 'manageGitConfig', 'scanRoot', 'socketPath', 'username'].sort(),
+    )
   })
   check('the declared defaults are the documented ones', () => {
     assert.equal(plain.keyFile.get(), '')
@@ -149,8 +169,12 @@ async function boot(overrides = {}) {
   })
   check('exactly the per-operation fields are volatile', () => {
     const volatile = Object.entries(plain)
-      .filter(([, value]) => value !== null && typeof value === 'object' && typeof value.get === 'function')
-      .map(([key]) => key).sort()
+      .filter(
+        ([, value]) =>
+          value !== null && typeof value === 'object' && typeof value.get === 'function',
+      )
+      .map(([key]) => key)
+      .sort()
     assert.deepEqual(volatile, ['host', 'keyFile', 'username'])
   })
   check('Config tolerates a field it no longer declares, and refuses a bad type', () => {
@@ -167,7 +191,10 @@ async function boot(overrides = {}) {
   // ---- apply ---------------------------------------------------------------
   const first = await boot()
   check('apply() registers without a warning', () => {
-    assert.deepEqual(first.log.filter(([level]) => level === 'warn'), [])
+    assert.deepEqual(
+      first.log.filter(([level]) => level === 'warn'),
+      [],
+    )
   })
   check('it registers exactly the three documented routes', () => {
     assert.deepEqual(
@@ -239,14 +266,21 @@ async function boot(overrides = {}) {
     assert.equal(record.payload.alg, 'aes-256-gcm')
     assert.equal(record.payload.aad, 'dsh-git/github')
     assert.deepEqual(Object.keys(record.payload).sort(), ['aad', 'alg', 'ct', 'iv', 'tag', 'v'])
-    assert.equal(JSON.stringify(record.payload).includes(TOKEN), false, 'the plaintext is in the payload')
+    assert.equal(
+      JSON.stringify(record.payload).includes(TOKEN),
+      false,
+      'the plaintext is in the payload',
+    )
   })
   await checkAsync('the key file appears with mode 600, and opens that record', async () => {
     const path = second.config.keyFile.get()
     const stat = statSync(path)
     assert.equal((stat.mode & 0o777).toString(8), '600')
     const record = second.records.get('dsh-git/github')
-    assert.equal(crypto.open(crypto.loadKeyFile(path, { create: false }), record.payload, crypto.AAD), TOKEN)
+    assert.equal(
+      crypto.open(crypto.loadKeyFile(path, { create: false }), record.payload, crypto.AAD),
+      TOKEN,
+    )
   })
   await checkAsync('the vault then reports configured and readable', async () => {
     const state = await second.state()
@@ -265,7 +299,11 @@ async function boot(overrides = {}) {
     const broken = await second.post('/api/dsh-git.token', '{not json')
     for (const answer of [missing, empty, spaced, broken]) {
       answers.push(answer.text)
-      assert.equal(answer.status, 400, 'answered ' + answer.status + ' ' + answer.text.slice(0, 120))
+      assert.equal(
+        answer.status,
+        400,
+        'answered ' + answer.status + ' ' + answer.text.slice(0, 120),
+      )
       assert.equal(answer.body.ok, false)
     }
   })
@@ -289,12 +327,19 @@ async function boot(overrides = {}) {
   second.dispose()
 
   // ---- git configuration ---------------------------------------------------
-  const gitconfig = () => (existsSync(process.env.GIT_CONFIG_GLOBAL) ? readFileSync(process.env.GIT_CONFIG_GLOBAL, 'utf8') : '')
+  const gitconfig = () =>
+    existsSync(process.env.GIT_CONFIG_GLOBAL)
+      ? readFileSync(process.env.GIT_CONFIG_GLOBAL, 'utf8')
+      : ''
   /** Ask git itself: `safe.directory=x` renders as a `[safe] directory` section, so a text search would miss it. */
   const safeDirectories = () => {
     try {
-      return execFileSync('git', ['config', '--global', '--get-all', 'safe.directory'], { encoding: 'utf8' })
-        .split('\n').map(line => line.trim()).filter(Boolean)
+      return execFileSync('git', ['config', '--global', '--get-all', 'safe.directory'], {
+        encoding: 'utf8',
+      })
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
     } catch {
       return [] // the key is simply absent
     }
@@ -302,7 +347,11 @@ async function boot(overrides = {}) {
   const configured = await boot({ manageGitConfig: true })
   check('the helper is registered once, for the configured host', () => {
     const text = gitconfig()
-    assert.equal(text.includes('credential "https://github.com"'), true, 'no helper entry was written')
+    assert.equal(
+      text.includes('credential "https://github.com"'),
+      true,
+      'no helper entry was written',
+    )
     assert.equal(text.includes('credhelper.cjs'), true)
     assert.equal(text.split('helper = ').length - 1, 1, 'the helper was registered more than once')
   })

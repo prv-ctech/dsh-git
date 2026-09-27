@@ -15,6 +15,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
+      # Both tools are pinned exactly in package.json, so the gate cannot move
+      # under a contributor: a new version is a deliberate commit.
+      - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - run: npm run check:pack
 

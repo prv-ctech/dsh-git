@@ -14,13 +14,14 @@ const { join } = require('node:path')
 const HOME = mkdtempSync(join(tmpdir(), 'dsh-git-socket-'))
 const HELPER = join(__dirname, '..', 'lib', 'credhelper.cjs')
 const TOKEN = 'ghp_socket_check_0123456789abcdef'
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const checks = []
 const check = (label, fn) => {
   try {
     const result = fn()
-    if (result && typeof result.then === 'function') throw new Error('a check returned a promise; await it outside')
+    if (result && typeof result.then === 'function')
+      throw new Error('a check returned a promise; await it outside')
     checks.push([label, true, ''])
   } catch (error) {
     checks.push([label, false, error.message])
@@ -36,15 +37,18 @@ const checkAsync = async (label, fn) => {
 }
 
 /** One client connection: write the request, read until the host closes. */
-const ask = (socketPath, request) => new Promise((resolve, reject) => {
-  const socket = connect(socketPath)
-  let answer = ''
-  socket.setEncoding('utf8')
-  socket.on('connect', () => socket.write(request))
-  socket.on('data', (chunk) => { answer += chunk })
-  socket.on('error', reject)
-  socket.on('end', () => resolve(answer))
-})
+const ask = (socketPath, request) =>
+  new Promise((resolve, reject) => {
+    const socket = connect(socketPath)
+    let answer = ''
+    socket.setEncoding('utf8')
+    socket.on('connect', () => socket.write(request))
+    socket.on('data', (chunk) => {
+      answer += chunk
+    })
+    socket.on('error', reject)
+    socket.on('end', () => resolve(answer))
+  })
 
 /**
  * The helper, spawned exactly as git spawns it.
@@ -53,18 +57,23 @@ const ask = (socketPath, request) => new Promise((resolve, reject) => {
  * serving while the child talks to it, and `spawnSync` would block this event
  * loop — the child would wait for an answer nobody could send.
  */
-const helper = (args, input, env = {}) => new Promise((resolve) => {
-  const child = spawn(process.execPath, [HELPER, ...args], { env: { ...process.env, ...env } })
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (chunk) => { stdout += chunk })
-  child.stderr.on('data', (chunk) => { stderr += chunk })
-  child.on('close', (status) => resolve({ status, stdout, stderr }))
-  child.on('error', (error) => resolve({ status: null, stdout, stderr: stderr + error.message }))
-  child.stdin.end(input)
-})
+const helper = (args, input, env = {}) =>
+  new Promise((resolve) => {
+    const child = spawn(process.execPath, [HELPER, ...args], { env: { ...process.env, ...env } })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+    child.on('error', (error) => resolve({ status: null, stdout, stderr: stderr + error.message }))
+    child.stdin.end(input)
+  })
 
 ;(async () => {
   const { parseCredentialRequest, answerCredentialRequest, createCredentialSocket } =
@@ -88,26 +97,53 @@ const helper = (args, input, env = {}) => new Promise((resolve) => {
 
   const secret = () => TOKEN
   check('a matching host is answered with the credential', () => {
-    assert.equal(answerCredentialRequest('protocol=https\nhost=github.com\n\n', { host: 'github.com', username: 'x-access-token', secret }),
-      'username=x-access-token\npassword=' + TOKEN + '\n\n')
+    assert.equal(
+      answerCredentialRequest('protocol=https\nhost=github.com\n\n', {
+        host: 'github.com',
+        username: 'x-access-token',
+        secret,
+      }),
+      'username=x-access-token\npassword=' + TOKEN + '\n\n',
+    )
   })
   check('host matching ignores case', () => {
-    const answer = answerCredentialRequest('host=GitHub.COM\n', { host: 'github.com', username: 'x-access-token', secret })
+    const answer = answerCredentialRequest('host=GitHub.COM\n', {
+      host: 'github.com',
+      username: 'x-access-token',
+      secret,
+    })
     assert.equal(answer, 'username=x-access-token\npassword=' + TOKEN + '\n\n')
   })
   check('another host is answered with nothing', () => {
-    assert.equal(answerCredentialRequest('host=gist.github.com\n', { host: 'github.com', username: 'x-access-token', secret }), '')
+    assert.equal(
+      answerCredentialRequest('host=gist.github.com\n', {
+        host: 'github.com',
+        username: 'x-access-token',
+        secret,
+      }),
+      '',
+    )
   })
   check('a request with no host is answered with nothing', () => {
     assert.equal(answerCredentialRequest('protocol=https\n', { host: 'github.com', secret }), '')
   })
   check('a request carrying its own username keeps it', () => {
-    const answer = answerCredentialRequest('host=github.com\nusername=octocat\n', { host: 'github.com', username: 'x-access-token', secret })
+    const answer = answerCredentialRequest('host=github.com\nusername=octocat\n', {
+      host: 'github.com',
+      username: 'x-access-token',
+      secret,
+    })
     assert.equal(answer, 'username=octocat\npassword=' + TOKEN + '\n\n')
   })
   check('with no secret there is no answer', () => {
-    assert.equal(answerCredentialRequest('host=github.com\n', { host: 'github.com', secret: () => null }), '')
-    assert.equal(answerCredentialRequest('host=github.com\n', { host: 'github.com', secret: () => '' }), '')
+    assert.equal(
+      answerCredentialRequest('host=github.com\n', { host: 'github.com', secret: () => null }),
+      '',
+    )
+    assert.equal(
+      answerCredentialRequest('host=github.com\n', { host: 'github.com', secret: () => '' }),
+      '',
+    )
   })
 
   // ---- the socket ----------------------------------------------------------
@@ -130,17 +166,25 @@ const helper = (args, input, env = {}) => new Promise((resolve) => {
     assert.equal(stat.isSocket(), true, 'not a socket')
     assert.equal((stat.mode & 0o777).toString(8), '600')
   })
-  await checkAsync('a locked vault answers with nothing, then a token is felt at once', async () => {
-    assert.equal(await ask(socketPath, 'protocol=https\nhost=github.com\n\n'), '')
-    current = TOKEN
-    assert.equal(await ask(socketPath, 'protocol=https\nhost=github.com\n\n'),
-      'username=x-access-token\npassword=' + TOKEN + '\n\n')
-  })
+  await checkAsync(
+    'a locked vault answers with nothing, then a token is felt at once',
+    async () => {
+      assert.equal(await ask(socketPath, 'protocol=https\nhost=github.com\n\n'), '')
+      current = TOKEN
+      assert.equal(
+        await ask(socketPath, 'protocol=https\nhost=github.com\n\n'),
+        'username=x-access-token\npassword=' + TOKEN + '\n\n',
+      )
+    },
+  )
   await checkAsync('an oversized request is dropped rather than buffered', async () => {
     assert.equal(await ask(socketPath, 'a'.repeat(5000)), '')
   })
   check('the exposed handler is the same protocol, without a socket', () => {
-    assert.equal(server.handle('host=github.com\n\n'), 'username=x-access-token\npassword=' + TOKEN + '\n\n')
+    assert.equal(
+      server.handle('host=github.com\n\n'),
+      'username=x-access-token\npassword=' + TOKEN + '\n\n',
+    )
   })
   server.stop()
   check('stop removes the socket and a second stop is safe', () => {
@@ -150,7 +194,11 @@ const helper = (args, input, env = {}) => new Promise((resolve) => {
 
   const stalePath = join(HOME, 'stale.sock')
   writeFileSync(stalePath, 'not a socket')
-  const second = createCredentialSocket({ socketPath: stalePath, host: 'github.com', secret: () => TOKEN })
+  const second = createCredentialSocket({
+    socketPath: stalePath,
+    host: 'github.com',
+    secret: () => TOKEN,
+  })
   second.start()
   await sleep(120)
   check('a stale file at the path does not stop the bind', () => {
@@ -159,46 +207,71 @@ const helper = (args, input, env = {}) => new Promise((resolve) => {
   second.stop()
 
   // ---- the helper git runs -------------------------------------------------
-  const third = createCredentialSocket({ socketPath, host: 'github.com', username: 'x-access-token', secret: () => TOKEN })
+  const third = createCredentialSocket({
+    socketPath,
+    host: 'github.com',
+    username: 'x-access-token',
+    secret: () => TOKEN,
+  })
   third.start()
   await sleep(120)
   await checkAsync('the helper relays get to the socket and exits 0', async () => {
-    const result = await helper(['--socket', socketPath, 'get'], 'protocol=https\nhost=github.com\n\n')
+    const result = await helper(
+      ['--socket', socketPath, 'get'],
+      'protocol=https\nhost=github.com\n\n',
+    )
     assert.equal(result.status, 0)
     assert.equal(result.stdout, 'username=x-access-token\npassword=' + TOKEN + '\n\n')
   })
   await checkAsync('the helper answers nothing for a host this socket does not serve', async () => {
-    const result = await helper(['--socket', socketPath, 'get'], 'protocol=https\nhost=gist.github.com\n\n')
+    const result = await helper(
+      ['--socket', socketPath, 'get'],
+      'protocol=https\nhost=gist.github.com\n\n',
+    )
     assert.equal(result.status, 0)
     assert.equal(result.stdout, '')
   })
   await checkAsync('store and erase are silent no-ops that never connect', async () => {
     for (const operation of ['store', 'erase']) {
-      const result = await helper(['--socket', join(HOME, 'never.sock'), operation], 'protocol=https\nhost=github.com\npassword=x\n\n')
+      const result = await helper(
+        ['--socket', join(HOME, 'never.sock'), operation],
+        'protocol=https\nhost=github.com\npassword=x\n\n',
+      )
       assert.equal(result.status, 0, operation + ' exited ' + result.status)
       assert.equal(result.stdout, '', operation + ' wrote ' + JSON.stringify(result.stdout))
       assert.equal(result.stderr, '', operation + ' complained: ' + JSON.stringify(result.stderr))
     }
   })
   await checkAsync('a missing socket exits 0 with the reason on stderr', async () => {
-    const result = await helper(['--socket', join(HOME, 'never.sock'), 'get'], 'protocol=https\nhost=github.com\n\n')
+    const result = await helper(
+      ['--socket', join(HOME, 'never.sock'), 'get'],
+      'protocol=https\nhost=github.com\n\n',
+    )
     assert.equal(result.status, 0)
     assert.equal(result.stdout, '')
     assert.match(result.stderr, /is the harness running\?/)
   })
-  await checkAsync('with no --socket the helper prints the usage line and says nothing', async () => {
-    const result = await helper(['get'], 'protocol=https\nhost=github.com\n\n')
-    assert.equal(result.status, 0)
-    assert.equal(result.stdout, '')
-    assert.match(result.stderr, /no socket configured/)
-  })
+  await checkAsync(
+    'with no --socket the helper prints the usage line and says nothing',
+    async () => {
+      const result = await helper(['get'], 'protocol=https\nhost=github.com\n\n')
+      assert.equal(result.status, 0)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /no socket configured/)
+    },
+  )
   await checkAsync('an unknown operation is refused quietly', async () => {
-    const result = await helper(['--socket', socketPath, 'wat'], 'protocol=https\nhost=github.com\n\n')
+    const result = await helper(
+      ['--socket', socketPath, 'wat'],
+      'protocol=https\nhost=github.com\n\n',
+    )
     assert.equal(result.status, 0)
     assert.equal(result.stdout, '')
   })
   await checkAsync('the socket path has exactly one source: --socket', async () => {
-    const result = await helper(['get'], 'protocol=https\nhost=github.com\n\n', { DSH_GIT_SOCKET: socketPath })
+    const result = await helper(['get'], 'protocol=https\nhost=github.com\n\n', {
+      DSH_GIT_SOCKET: socketPath,
+    })
     assert.equal(result.status, 0)
     assert.equal(result.stdout, '', 'the environment variable was honoured')
     assert.match(result.stderr, /no socket configured/)

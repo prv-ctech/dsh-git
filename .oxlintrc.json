@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "plugins": ["unicorn", "oxc", "typescript", "node", "import", "promise"],
+  "env": {
+    "node": true,
+    "es2024": true
+  },
+  "overrides": [
+    {
+      "files": ["lib/client.js"],
+      "env": {
+        "browser": true
+      }
+    }
+  ]
+}
