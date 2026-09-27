@@ -1,0 +1,75 @@
+{
+  "name": "dsh-git",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "description": "GitHub credentials for DeepSeek Harness 0.1.7: an AES-256-GCM sealed token in the native credential record, a Settings card, and a git credential helper over a 0600 unix socket — no third-party dependency in the trust path.",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "git",
+    "credentials",
+    "credential-helper",
+    "cordis"
+  ],
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/crypto-check.cjs && node test/socket-check.cjs && node test/host-apply-check.cjs && node test/client-render-check.cjs",
+    "test:crypto": "node test/crypto-check.cjs",
+    "test:socket": "node test/socket-check.cjs",
+    "test:host": "node test/host-apply-check.cjs",
+    "test:client": "node test/client-render-check.cjs",
+    "check:pack": "node test/pack-check.cjs",
+    "check:boot": "node test/boot-reuse-check.cjs",
+    "check:live": "node test/live-surface-check.cjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-credentials": ">=0.1.7-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.7-rc.2 <0.2.0",
+    "@deepseek-ai/schemastery": "~3.18.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-credentials": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-home-paths": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.1.7-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4"
+  }
+}

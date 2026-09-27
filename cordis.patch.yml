@@ -1,0 +1,16 @@
+# dsh-git bundle patch — one host row.
+#
+# The row id (`git`) is load-bearing: a settings namespace IS the profile entry
+# id in 0.1.7, so this is what the browser half addresses with
+# `ctx.configForms.get('git')`. Renaming it means renaming ENTRY_ID in
+# lib/client.js too.
+#
+# There is deliberately NO `config:` block. The plugin's declared schema
+# defaults are the composition layer, and a GUI edit is written as the user
+# layer of this same entry, so the two never duplicate a value.
+#
+# The credential record's scope is the PLUGIN name (`dsh-git`), not this row id:
+# `credentialKey('dsh-git', 'github')` resolves to `dsh-git/github`.
+- insert:
+    - id: git
+      name: dsh-git
