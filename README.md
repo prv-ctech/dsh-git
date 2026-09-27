@@ -31,6 +31,18 @@ the socket live in `$DSH_HOME`, beside the record they belong to. Every field ha
 default (`host`, `username`, `scanRoot`, `keyFile`, `socketPath`,
 `manageGitConfig`); override one in the profile patch if you need to.
 
+## Rolling Back
+
+Every release keeps its own tarball on the
+[releases page](https://github.com/prv-ctech/dsh-git/releases), so going back is
+pinning the tag before the one you are on:
+
+```sh
+dsh plugin --profile web add github:prv-ctech/dsh-git#v0.1.0
+```
+
+Restart `dsh web`. Your token is untouched — a version change is not a removal.
+
 ## Folder Ownership
 
 Git refuses a repository whose owner is not the user running it:

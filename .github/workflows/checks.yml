@@ -1,0 +1,56 @@
+name: Checks
+
+# The gates, defined once because two workflows run them: CI on every push and
+# pull request, and Release on the tagged commit, so a tag pushed from a commit
+# that never passed CI cannot publish unchecked.
+on:
+  workflow_call:
+
+jobs:
+  unit:
+    name: Unit checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      # Both tools are pinned exactly in package.json, so the gate cannot move
+      # under a contributor: a new version is a deliberate commit.
+      - run: npm run lint
+      - run: npm run format:check
+      # Critical and high only. The only advisories in the resolved tree today
+      # are moderate and all of them sit inside the harness's own prerelease
+      # packages — pulled in with the devDependency through an Office skill that
+      # nothing here loads. None is actionable from this repo, and a gate that is
+      # permanently red is a gate people learn to ignore. A high or critical
+      # would be actionable, and fails. The published tarball declares no runtime
+      # dependency at all, so no advisory can reach a consumer.
+      - run: npm audit --audit-level=high
+      - run: npm test
+      - run: npm run check:pack
+
+  live:
+    name: Live checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      # Job-level `env` may not use the `runner` context, so the throwaway home
+      # is exported for the steps that follow instead of being computed there.
+      - name: Point DSH at a throwaway home
+        run: echo "DSH_HOME=$RUNNER_TEMP/dsh-home" >> "$GITHUB_ENV"
+      # `dsh plugin add` shells out to pnpm, which the runner image does not
+      # ship. The major is pinned to the one this profile is built against.
+      - name: Install pnpm
+        run: npm install --global pnpm@12
+      - name: Install this checkout into a throwaway web profile
+        run: ./node_modules/.bin/dsh plugin --profile web add "link:$GITHUB_WORKSPACE"
+      # Both boot checks copy the provisioned home as their source, so they
+      # run here, not in the unit job.
+      - run: npm run check:boot
+      - run: npm run check:live

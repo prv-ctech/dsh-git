@@ -2,7 +2,7 @@ name: Release
 
 # A version tag publishes one release: the tag names it, and the tarball is named
 # after the version. Installers pin that tag —
-#   dsh plugin --profile web add github:prv-ctech/dsh-git#v0.1.0
+#   dsh plugin --profile web add github:prv-ctech/dsh-git#v0.2.0
 # — so what a profile runs is always a version someone named, never a moving
 # target. GitHub marks the newest release as Latest on its own.
 on:
@@ -13,17 +13,23 @@ permissions:
   contents: write
 
 jobs:
+  # Every gate CI runs on main, re-run on the tagged commit. The gates only
+  # check out and read, so they do not inherit the publish job's write scope.
+  checks:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/checks.yml
+
   release:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm test
+      # No `npm install`: the gates already ran on this exact commit, the tarball
+      # ships no dependency, and the assertions below read files, not modules.
       - run: npm run check:pack
       - name: The tag must name the packaged version
         run: |
@@ -32,6 +38,20 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
             exit 1
           fi
+      # The notes are the changelog section for this version, not a dump of the
+      # commit log: a release with no entry fails here rather than shipping
+      # silently.
+      - name: The changelog must carry a section for this version, and it becomes the notes
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          awk -v want="## [$version]" \
+            'index($0, want) == 1 { on = 1; next } /^## \[/ { on = 0 } on' \
+            CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## [$version]' section"
+            exit 1
+          fi
+          echo "notes for v$version: $(wc -l < notes.md) lines"
       - run: npm pack
       - name: Publish the release
         env:
@@ -40,4 +60,4 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           gh release create "$GITHUB_REF_NAME" --verify-tag \
             "dsh-git-$version.tgz" \
-            --title "$GITHUB_REF_NAME" --generate-notes
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
