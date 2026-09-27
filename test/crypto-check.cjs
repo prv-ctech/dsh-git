@@ -28,7 +28,7 @@ const throws = (fn, pattern) => {
 
 ;(async () => {
   const crypto = await import('../lib/crypto.js')
-  const { AAD, KEY_BYTES, deriveKey, keyFileState, loadKeyFile, modeString, open, randomKey, randomSalt, seal } = crypto
+  const { AAD, KEY_BYTES, keyFileState, loadKeyFile, modeString, open, randomKey, seal } = crypto
 
   const HOME = mkdtempSync(join(tmpdir(), 'dsh-git-crypto-'))
   const keyPath = join(HOME, 'test.key')
@@ -80,24 +80,6 @@ const throws = (fn, pattern) => {
   check('a record with a missing field is refused', () => {
     const payload = { ...seal(randomKey(), 'x'), tag: '' }
     throws(() => open(randomKey(), payload), /missing tag/)
-  })
-
-  // ---- passphrase KDF ------------------------------------------------------
-  check('the KDF is deterministic and salt-dependent', () => {
-    const salt = randomSalt()
-    assert.equal(deriveKey('pw', salt).toString('hex'), deriveKey('pw', salt).toString('hex'))
-    assert.notEqual(deriveKey('pw', salt).toString('hex'), deriveKey('pw', randomSalt()).toString('hex'))
-    assert.equal(deriveKey('pw', salt).length, KEY_BYTES)
-  })
-  check('the KDF works at the declared parameters (maxmem is raised)', () => {
-    const key = deriveKey('correct horse battery staple', randomSalt())
-    assert.equal(key.length, KEY_BYTES)
-  })
-  check('a passphrase-sealed payload opens only with that passphrase', () => {
-    const salt = randomSalt()
-    const payload = seal(deriveKey('right', salt), 'github_pat_example')
-    assert.equal(open(deriveKey('right', salt), payload), 'github_pat_example')
-    throws(() => open(deriveKey('wrong', salt), payload), /failed authentication/)
   })
 
   // ---- key file ------------------------------------------------------------

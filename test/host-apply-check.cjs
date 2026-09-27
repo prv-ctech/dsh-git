@@ -8,12 +8,16 @@
 //
 //   node test/host-apply-check.cjs
 const assert = require('node:assert/strict')
-const { mkdtempSync, existsSync, statSync, rmSync } = require('node:fs')
+const { execFileSync } = require('node:child_process')
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 
 const HOME = mkdtempSync(join(tmpdir(), 'dsh-git-test-'))
 process.env.DSH_HOME = HOME
+// The plugin writes git config; keep that off the operator's own file.
+process.env.GIT_CONFIG_GLOBAL = join(HOME, 'gitconfig')
+process.env.GIT_CONFIG_SYSTEM = '/dev/null'
 
 const checks = []
 const check = (label, fn) => {
@@ -125,35 +129,34 @@ async function boot(overrides = {}) {
 
 ;(async () => {
   const mod = await import('../lib/index.js')
-  const { Config, UNLOCK_MODES, CREDENTIAL_KEY, CREDENTIAL_ID, name } = mod
+  const { Config, CREDENTIAL_KEY, CREDENTIAL_ID, name } = mod
   const crypto = await import('../lib/crypto.js')
   const answers = []
 
   // ---- the schema ----------------------------------------------------------
   const plain = Config({})
-  check('Config declares the seven documented fields', () => {
+  check('Config declares the six documented fields', () => {
     assert.deepEqual(Object.keys(plain).sort(),
-      ['host', 'keyFile', 'manageGitConfig', 'socketPath', 'unlockMode', 'username'].sort())
+      ['host', 'keyFile', 'manageGitConfig', 'scanRoot', 'socketPath', 'username'].sort())
   })
   check('the declared defaults are the documented ones', () => {
-    assert.equal(plain.unlockMode.get(), 'keyfile')
     assert.equal(plain.keyFile.get(), '')
     assert.equal(plain.socketPath, '')
     assert.equal(plain.host.get(), 'github.com')
     assert.equal(plain.username.get(), 'x-access-token')
     assert.equal(plain.manageGitConfig, true)
+    assert.equal(plain.scanRoot, '')
   })
   check('exactly the per-operation fields are volatile', () => {
     const volatile = Object.entries(plain)
       .filter(([, value]) => value !== null && typeof value === 'object' && typeof value.get === 'function')
       .map(([key]) => key).sort()
-    assert.deepEqual(volatile, ['host', 'keyFile', 'unlockMode', 'username'])
+    assert.deepEqual(volatile, ['host', 'keyFile', 'username'])
   })
-  check('Config rejects an unknown unlock mode', () => {
-    assert.throws(() => Config({ unlockMode: 'env' }))
-  })
-  check('there are exactly two unlock sources, and neither is the environment', () => {
-    assert.deepEqual(UNLOCK_MODES, ['keyfile', 'ask'])
+  check('Config tolerates a field it no longer declares, and refuses a bad type', () => {
+    // A profile patch that still carries `unlockMode` must not break the plugin.
+    assert.doesNotThrow(() => Config({ unlockMode: 'ask' }))
+    assert.throws(() => Config({ scanRoot: 42 }))
   })
   check('the credential address is the plugin name plus the record id', () => {
     assert.equal(name, 'dsh-git')
@@ -161,20 +164,18 @@ async function boot(overrides = {}) {
     assert.equal(CREDENTIAL_KEY, 'dsh-git/github')
   })
 
-  // ---- apply, keyfile mode -------------------------------------------------
+  // ---- apply ---------------------------------------------------------------
   const first = await boot()
   check('apply() registers without a warning', () => {
     assert.deepEqual(first.log.filter(([level]) => level === 'warn'), [])
   })
-  check('it registers exactly the five documented routes', () => {
+  check('it registers exactly the three documented routes', () => {
     assert.deepEqual(
       first.registered.routes.map((entry) => [entry.path, entry.methods.join(',')]).sort(),
       [
         ['/api/dsh-git.forget', 'POST'],
-        ['/api/dsh-git.lock', 'POST'],
         ['/api/dsh-git.state', 'GET'],
         ['/api/dsh-git.token', 'POST'],
-        ['/api/dsh-git.unlock', 'POST'],
       ],
     )
     for (const entry of first.registered.routes) assert.equal(entry.requestBody, 'buffered')
@@ -197,10 +198,8 @@ async function boot(overrides = {}) {
     assert.equal(state.ok, true)
     assert.equal(state.credentialKey, 'dsh-git/github')
     assert.equal(state.credentials, true)
-    assert.equal(state.unlockMode, 'keyfile')
     assert.equal(state.configured, false)
     assert.equal(state.readable, false)
-    assert.equal(state.locked, false)
     assert.equal(state.error, null)
     assert.equal(state.host, 'github.com')
     assert.equal(state.username, 'x-access-token')
@@ -210,6 +209,16 @@ async function boot(overrides = {}) {
     assert.match(state.helper.command, /--socket/)
     assert.ok(state.helper.command.includes(second.config.socketPath))
     assert.equal(typeof state.helper.installed, 'boolean')
+  })
+  await checkAsync('the state carries the ownership report, and no unlock mode', async () => {
+    const state = await second.state()
+    assert.equal('unlockMode' in state, false)
+    assert.equal('locked' in state, false)
+    assert.equal('trust' in state, false)
+    assert.equal(state.ownership.root, '/workspace')
+    assert.equal(state.ownership.exists, existsSync('/workspace'))
+    assert.equal(state.ownership.user, process.getuid() + ':' + process.getgid())
+    assert.deepEqual(state.ownership.misowned, [])
   })
   await checkAsync('reading the state does not create a key file', async () => {
     const state = await second.state()
@@ -229,8 +238,7 @@ async function boot(overrides = {}) {
     assert.equal(record.payload.v, 1)
     assert.equal(record.payload.alg, 'aes-256-gcm')
     assert.equal(record.payload.aad, 'dsh-git/github')
-    assert.deepEqual(Object.keys(record.payload).sort(), ['aad', 'alg', 'ct', 'iv', 'kdf', 'tag', 'v'])
-    assert.equal(record.payload.kdf.kind, 'keyfile')
+    assert.deepEqual(Object.keys(record.payload).sort(), ['aad', 'alg', 'ct', 'iv', 'tag', 'v'])
     assert.equal(JSON.stringify(record.payload).includes(TOKEN), false, 'the plaintext is in the payload')
   })
   await checkAsync('the key file appears with mode 600, and opens that record', async () => {
@@ -244,7 +252,6 @@ async function boot(overrides = {}) {
     const state = await second.state()
     assert.equal(state.configured, true)
     assert.equal(state.readable, true)
-    assert.equal(state.locked, false)
     assert.equal(state.error, null)
     assert.equal(state.keyFile.exists, true)
     const tokenRoute = await second.post('/api/dsh-git.token', { token: TOKEN })
@@ -256,12 +263,20 @@ async function boot(overrides = {}) {
     const empty = await second.post('/api/dsh-git.token', { token: '' })
     const spaced = await second.post('/api/dsh-git.token', { token: 'has space' })
     const broken = await second.post('/api/dsh-git.token', '{not json')
-    const noPass = await second.post('/api/dsh-git.unlock', { passphrase: '' })
-    for (const answer of [missing, empty, spaced, broken, noPass]) {
+    for (const answer of [missing, empty, spaced, broken]) {
       answers.push(answer.text)
       assert.equal(answer.status, 400, 'answered ' + answer.status + ' ' + answer.text.slice(0, 120))
       assert.equal(answer.body.ok, false)
     }
+  })
+  await checkAsync('a record that is not a sealed payload is refused', async () => {
+    second.records.set('dsh-git/github', { kind: 'api-key', key: 'x' })
+    const state = await second.state()
+    answers.push(JSON.stringify(state))
+    assert.equal(state.readable, false)
+    assert.match(state.error, /holds a api-key record/)
+    await second.post('/api/dsh-git.token', { token: TOKEN })
+    assert.equal((await second.state()).readable, true)
   })
   await checkAsync('forget deletes the record and the vault reads empty again', async () => {
     const forgotten = await second.post('/api/dsh-git.forget', {})
@@ -273,67 +288,54 @@ async function boot(overrides = {}) {
   })
   second.dispose()
 
-  // ---- apply, passphrase mode ---------------------------------------------
-  const third = await boot({ unlockMode: 'ask' })
-  const PASSPHRASE = 'correct horse battery staple'
-  await checkAsync('an ask-mode vault starts unlocked-but-empty and is created by the passphrase', async () => {
-    const before = await third.state()
-    assert.equal(before.unlockMode, 'ask')
-    assert.equal(before.configured, false)
-    assert.equal(before.locked, false)
-    const unlocked = await third.post('/api/dsh-git.unlock', { passphrase: PASSPHRASE })
-    answers.push(unlocked.text)
-    assert.equal(unlocked.status, 200)
-    assert.equal(unlocked.body.outcome, 'created')
+  // ---- git configuration ---------------------------------------------------
+  const gitconfig = () => (existsSync(process.env.GIT_CONFIG_GLOBAL) ? readFileSync(process.env.GIT_CONFIG_GLOBAL, 'utf8') : '')
+  /** Ask git itself: `safe.directory=x` renders as a `[safe] directory` section, so a text search would miss it. */
+  const safeDirectories = () => {
+    try {
+      return execFileSync('git', ['config', '--global', '--get-all', 'safe.directory'], { encoding: 'utf8' })
+        .split('\n').map(line => line.trim()).filter(Boolean)
+    } catch {
+      return [] // the key is simply absent
+    }
+  }
+  const configured = await boot({ manageGitConfig: true })
+  check('the helper is registered once, for the configured host', () => {
+    const text = gitconfig()
+    assert.equal(text.includes('credential "https://github.com"'), true, 'no helper entry was written')
+    assert.equal(text.includes('credhelper.cjs'), true)
+    assert.equal(text.split('helper = ').length - 1, 1, 'the helper was registered more than once')
   })
-  await checkAsync('a token stored in ask mode is sealed under a scrypt KDF', async () => {
-    const stored = await third.post('/api/dsh-git.token', { token: TOKEN })
-    answers.push(stored.text)
-    assert.equal(stored.status, 200)
-    const payload = third.records.get('dsh-git/github').payload
-    assert.equal(payload.kdf.kind, 'scrypt')
-    assert.equal(payload.kdf.N, crypto.KDF.N)
-    assert.equal(payload.kdf.r, crypto.KDF.r)
-    assert.equal(payload.kdf.p, crypto.KDF.p)
-    const key = crypto.deriveKey(PASSPHRASE, Buffer.from(payload.kdf.salt, 'base64'), payload.kdf)
-    assert.equal(crypto.open(key, payload, crypto.AAD), TOKEN)
-    assert.equal(JSON.stringify(payload).includes(PASSPHRASE), false)
+  check('nothing this plugin does writes safe.directory', () => {
+    assert.deepEqual(safeDirectories(), [], 'a repository trust entry was written')
   })
-  await checkAsync('locking is felt at once and the vault refuses writes while locked', async () => {
-    const locked = await third.post('/api/dsh-git.lock', {})
-    answers.push(locked.text)
-    assert.equal(locked.status, 200)
-    assert.equal(locked.body.locked, true)
-    const state = await third.state()
-    assert.equal(state.locked, true)
-    assert.equal(state.configured, true)
-    assert.equal(state.readable, false)
-    const refused = await third.post('/api/dsh-git.token', { token: TOKEN })
-    answers.push(refused.text)
-    assert.equal(refused.status, 400)
-    assert.match(refused.body.error, /unlock the vault/)
-  })
-  await checkAsync('a wrong passphrase is refused and leaves the vault locked', async () => {
-    const wrong = await third.post('/api/dsh-git.unlock', { passphrase: 'wrong horse' })
-    answers.push(wrong.text)
-    assert.equal(wrong.status, 403)
-    assert.equal((await third.state()).locked, true)
-  })
-  await checkAsync('the right passphrase unlocks the record it created', async () => {
-    const right = await third.post('/api/dsh-git.unlock', { passphrase: PASSPHRASE })
-    answers.push(right.text)
-    assert.equal(right.status, 200)
-    assert.equal(right.body.outcome, 'unlocked')
-    const state = await third.state()
-    assert.equal(state.readable, true)
-    assert.equal(state.locked, false)
-  })
-  third.dispose()
+  configured.dispose()
 
-  check('no route ever answered with the token or the passphrase', () => {
+  // ---- repository ownership ------------------------------------------------
+  const scanRoot = join(HOME, 'workspace')
+  mkdirSync(join(scanRoot, 'repo-one', '.git'), { recursive: true })
+  mkdirSync(join(scanRoot, 'plain'), { recursive: true })
+  const scanned = await boot({ scanRoot })
+  await checkAsync('the ownership report scans the configured folder, read-only', async () => {
+    const state = await scanned.state()
+    assert.equal(state.ownership.root, scanRoot)
+    assert.equal(state.ownership.exists, true)
+    assert.equal(state.ownership.checked, 1)
+    assert.deepEqual(state.ownership.misowned, [])
+    assert.deepEqual(safeDirectories(), [], 'the report wrote git config')
+  })
+  scanned.dispose()
+  await checkAsync('a scan root that does not exist is reported, not fatal', async () => {
+    const absent = await boot({ scanRoot: join(HOME, 'nowhere') })
+    const state = await absent.state()
+    assert.equal(state.ownership.exists, false)
+    assert.equal(state.ownership.checked, 0)
+    absent.dispose()
+  })
+
+  check('no route ever answered with the token', () => {
     for (const text of answers) {
       assert.equal(text.includes(TOKEN), false, text.slice(0, 160))
-      assert.equal(text.includes(PASSPHRASE), false, text.slice(0, 160))
     }
   })
 

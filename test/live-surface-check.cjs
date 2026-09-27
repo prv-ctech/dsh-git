@@ -12,15 +12,19 @@
 //   2. a volatile write is live — the Settings card's transport round-trips
 //      through the profile patch and the value is felt without a restart, and
 //      the patch document is byte-identical once the value is unset again;
-//   3. the token is sealed into the harness's own credential record, the key
+//   3. repository ownership is reported and never written: the report names the
+//      configured folder and what it holds, and a `safe.directory` entry the
+//      operator wrote by hand is still exactly what the global config carries;
+//   4. the token is sealed into the harness's own credential record, the key
 //      file appears with mode 600, and neither the record nor any response
 //      carries the plaintext;
-//   4. git itself can authenticate: the helper git was configured with answers
+//   5. git itself can authenticate: the helper git was configured with answers
 //      over the socket, and `git credential fill` prints the token — while
 //      `approve`/`reject` stay no-ops, which is what keeps the token out of
 //      git's own storage;
-//   5. forgetting the token removes the record, and the helper then answers
-//      nothing at all.
+//   6. an uninstall — the package leaving the profile, as `pnpm remove` leaves
+//      it — takes the record, the key file, and the helper entry with it, and
+//      leaves another tool's `safe.directory` entry standing.
 const fs = require('node:fs')
 const { spawn, spawnSync } = require('node:child_process')
 const { createHash } = require('node:crypto')
@@ -32,14 +36,20 @@ const SOURCE = process.env.DSH_HOME || join(homedir(), '.dsh')
 const HOME = join(tmpdir(), 'dsh-git-e2e')
 const PROFILE = join(HOME, 'profiles', 'web')
 const PATCH = join(PROFILE, 'cordis.patch.yml')
+const MANIFEST = join(PROFILE, 'package.json')
 const CREDENTIALS = join(HOME, '.credentials.yaml')
+const KEY_FILE = join(HOME, 'dsh-git.key')
+const GITCONFIG = join(HOME, '.gitconfig')
 const PORT = Number(process.argv[2] ?? 3100)
 const BASE = 'http://127.0.0.1:' + PORT
 const TOKEN = 'ghp_e2e_do_not_use_0123456789abcdef'
 const HELPER = join(REPO, 'lib', 'credhelper.cjs')
+/** The one foreign entry this check seeds, to prove the plugin never edits the key. */
+const FOREIGN_SAFE_DIRECTORY = '/srv/other-tool/repo'
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const read = (path) => fs.readFileSync(path, 'utf8')
+const gitGlobal = (args) => spawnSync('git', ['config', '--global', ...args], { encoding: 'utf8', env: { ...process.env, HOME } })
 
 /** The client artifact revision the plugin host serves, as dsh-client-hmr computes it. */
 const artifactRevision = (file) => {
@@ -68,12 +78,24 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
   const scrubbed = patchText.replace(/^- id: git\r?\n(?:^[ \t]+.*\r?\n?)*/gm, '')
   if (scrubbed !== patchText) fs.writeFileSync(PATCH, scrubbed)
 
-  const manifestPath = join(PROFILE, 'package.json')
-  const manifest = JSON.parse(read(manifestPath))
+  // The ownership report scans one folder, so this check configures it the way
+  // an operator would: a user-layer row for the entry, applied at boot. The row
+  // also carries a key this version no longer declares — an operator's patch
+  // written against an earlier build — because a boot must tolerate that rather
+  // than refuse the profile.
+  const scanRoot = join(HOME, 'workspace')
+  const ownedRepo = join(scanRoot, 'repo-one')
+  fs.mkdirSync(join(ownedRepo, '.git'), { recursive: true })
+  fs.appendFileSync(PATCH, '- id: git\n  name: dsh-git\n  config:\n    scanRoot: ' + scanRoot + '\n    unlockMode: keyfile\n')
+  // A `safe.directory` entry this plugin must never touch, written before it boots.
+  gitGlobal(['--add', 'safe.directory', FOREIGN_SAFE_DIRECTORY])
+
+  const manifest = JSON.parse(read(MANIFEST))
   manifest.dependencies = { ...(manifest.dependencies || {}), 'dsh-git': 'link:' + REPO }
   const bundles = manifest.dsh.profile.bundles
   if (!bundles.includes('dsh-git')) bundles.push('dsh-git')
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
+  const manifestText = JSON.stringify(manifest, null, 2) + '\n'
+  fs.writeFileSync(MANIFEST, manifestText)
   fs.mkdirSync(join(PROFILE, 'node_modules'), { recursive: true })
   fs.rmSync(join(PROFILE, 'node_modules', 'dsh-git'), { recursive: true, force: true })
   fs.symlinkSync(REPO, join(PROFILE, 'node_modules', 'dsh-git'), 'dir')
@@ -128,6 +150,15 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
     'git', ['-c', 'credential.https://github.com.helper=' + config, 'credential', operation],
     { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8', env: { ...process.env, HOME, GIT_TERMINAL_PROMPT: '0' } },
   )
+  /** Wait for the harness to settle something the plugin does asynchronously. */
+  const until = async (predicate, timeoutMs = 30000) => {
+    const end = Date.now() + timeoutMs
+    while (Date.now() < end) {
+      if (await predicate()) return true
+      await sleep(500)
+    }
+    return false
+  }
 
   const answers = []
   try {
@@ -137,11 +168,11 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
       initial !== null && initial.ok === true && initial.credentials === true,
       JSON.stringify(initial).slice(0, 200))
     record('the state route names the record and the defaults',
-      initial !== null && initial.credentialKey === 'dsh-git/github' && initial.unlockMode === 'keyfile'
+      initial !== null && initial.credentialKey === 'dsh-git/github'
       && initial.host === 'github.com' && initial.username === 'x-access-token' && initial.manageGitConfig === true,
       JSON.stringify(initial).slice(0, 200))
     record('an unconfigured vault is reported, not hidden',
-      initial !== null && initial.configured === false && initial.readable === false && initial.locked === false)
+      initial !== null && initial.configured === false && initial.readable === false && initial.error === null)
     record('reading the state does not create a key file',
       initial !== null && initial.keyFile.exists === false && fs.existsSync(initial.keyFile.path) === false,
       initial === null ? 'no state' : initial.keyFile.path)
@@ -153,30 +184,46 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
       && initial.helper.command.includes(initial.socketPath) && initial.helper.installed === true,
       initial === null ? 'no state' : initial.helper.command)
 
-    const configured = spawnSync('git', ['config', '--global', '--get-all', 'credential.https://github.com.helper'],
-      { encoding: 'utf8', env: { ...process.env, HOME } })
+    const configured = gitGlobal(['--get-all', 'credential.https://github.com.helper'])
     record('git config in the throwaway home carries exactly that command',
       configured.status === 0 && configured.stdout.trim() === initial.helper.command.trim(),
       JSON.stringify(configured.stdout))
 
     // ---- 2. a volatile write is live, and the patch is left byte-identical --
     const reference = read(PATCH)
-    const set = await mutate([{ op: 'set', path: ['unlockMode'], value: 'ask' }])
-    const appended = read(PATCH)
-    const liveAsk = await state()
+    const set = await mutate([{ op: 'set', path: ['username'], value: 'x-access-oauth' }])
+    const afterSet = read(PATCH)
+    const live = await state()
     record('the settings transport accepts the volatile write',
       set.status === 200 && set.body && set.body.ok === true, set.status + ' ' + set.text.slice(0, 160))
-    record('an absent row is appended at the end',
-      appended.startsWith(reference) && appended.slice(reference.length).includes('- id: git')
-      && appended.slice(reference.length).includes('unlockMode: ask'),
-      JSON.stringify(appended.slice(reference.length)))
-    record('the appended value is live, without a restart',
-      liveAsk !== null && liveAsk.unlockMode === 'ask', liveAsk === null ? 'no state' : liveAsk.unlockMode)
+    record('the value lands in the entry\'s own user-layer row',
+      afterSet.includes('username: x-access-oauth') && (afterSet.match(/^- id: git$/gm) || []).length === 1,
+      JSON.stringify(afterSet.slice(reference.length)))
+    record('the written value is live, without a restart',
+      live !== null && live.username === 'x-access-oauth', live === null ? 'no state' : live.username)
 
-    const unset = await mutate([{ op: 'unset', path: ['unlockMode'] }])
-    record('unset prunes the row and restores the document byte-for-byte',
+    const unset = await mutate([{ op: 'unset', path: ['username'] }])
+    record('unset restores the document byte-for-byte',
       unset.status === 200 && read(PATCH) === reference,
       unset.status + ' ' + JSON.stringify(read(PATCH).slice(reference.length)))
+
+    // ---- 2b. ownership is reported, never written --------------------------
+    // Git's exception list lives in the *global* `safe.directory`, and an entry
+    // this plugin wrote there could not be told apart from one an operator wrote
+    // by hand. So the report says what git would refuse, and the key is never
+    // touched — the seeded entry is the proof.
+    const ownership = (await state() || {}).ownership
+    record('the ownership report names the configured folder and what it holds',
+      ownership !== undefined && ownership.root === scanRoot && ownership.exists === true
+      && ownership.checked === 1 && ownership.misowned.length === 0,
+      JSON.stringify(ownership))
+    record('the expected owner is this process\'s user',
+      ownership !== undefined && ownership.user === process.getuid() + ':' + process.getgid(),
+      ownership === undefined ? 'no report' : ownership.user)
+    const safe = gitGlobal(['--get-all', 'safe.directory'])
+    record('safe.directory still carries exactly the entry the operator wrote',
+      safe.status === 0 && safe.stdout.split('\n').map(line => line.trim()).filter(Boolean).join(',') === FOREIGN_SAFE_DIRECTORY,
+      JSON.stringify(safe.stdout))
 
     // ---- 3. the token is sealed into the harness's own record --------------
     const stored = await call('/api/dsh-git.token', { method: 'POST', body: JSON.stringify({ token: TOKEN }) })
@@ -191,7 +238,7 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
       afterStore !== null && afterStore.keyFile.exists === true && afterStore.keyFile.mode === '600' && afterStore.keyFile.safe === true,
       JSON.stringify(afterStore && afterStore.keyFile))
     record('the key file defaults into the harness home, not a shared path',
-      afterStore !== null && afterStore.keyFile.path === join(HOME, 'dsh-git.key'),
+      afterStore !== null && afterStore.keyFile.path === KEY_FILE,
       afterStore === null ? 'no state' : afterStore.keyFile.path)
     record('the sealed record is in the harness credential document',
       fs.existsSync(CREDENTIALS) && read(CREDENTIALS).includes('dsh-git/github'),
@@ -201,8 +248,7 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
     record('the plaintext is nowhere on disk under the throwaway home', (() => {
       // Bounded on purpose: the home also carries a copy of the profile's
       // node_modules, which is not what this claim is about.
-      const keyFile = (afterStore && afterStore.keyFile && afterStore.keyFile.path) || join(HOME, 'no-key-file')
-      const candidates = [CREDENTIALS, PATCH, keyFile, join(HOME, '.gitconfig'), join(HOME, 'plugin-state')]
+      const candidates = [CREDENTIALS, PATCH, KEY_FILE, GITCONFIG, join(HOME, 'plugin-state')]
       return candidates.every((candidate) => {
         if (!fs.existsSync(candidate)) return true
         const stat = fs.statSync(candidate)
@@ -240,13 +286,10 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
     // ---- 5. refusals, forgetting, and containment --------------------------
     const badToken = await call('/api/dsh-git.token', { method: 'POST', body: JSON.stringify({ token: 'has space' }) })
     answers.push(['bad token', badToken.text])
-    const noPass = await call('/api/dsh-git.unlock', { method: 'POST', body: JSON.stringify({ passphrase: '' }) })
-    answers.push(['empty passphrase', noPass.text])
     const notJson = await call('/api/dsh-git.token', { method: 'POST', body: '{not json' })
     answers.push(['malformed', notJson.text])
-    record('a whitespace token, an empty passphrase, and a malformed body are refused',
-      badToken.status === 400 && noPass.status === 400 && notJson.status === 400,
-      [badToken.status, noPass.status, notJson.status].join(','))
+    record('a whitespace token and a malformed body are refused',
+      badToken.status === 400 && notJson.status === 400, [badToken.status, notJson.status].join(','))
 
     const forgotten = await call('/api/dsh-git.forget', { method: 'POST', body: '{}' })
     answers.push(['forget', forgotten.text])
@@ -257,17 +300,55 @@ const record = (label, ok, detail = '') => checks.push([label, ok, detail])
     const emptyAgain = helper(afterForget.socketPath, 'protocol=https\nhost=github.com\n\n')
     record('the helper then answers nothing at all',
       emptyAgain.status === 0 && emptyAgain.stdout === '')
+    // Stored again, because the uninstall below has something to take with it.
+    const restored = await call('/api/dsh-git.token', { method: 'POST', body: JSON.stringify({ token: TOKEN }) })
+    answers.push(['restore', restored.text])
+    record('the token can be stored again after a forget',
+      restored.status === 200 && (await state()).configured === true)
 
     // ---- 6. the browser half, and the untouched operator documents ---------
     const bundlePath = join(REPO, 'lib', 'client.js')
     const bundle = await fetch(BASE + '/plugins/??dsh-git/client.js&rev=' + artifactRevision(bundlePath))
     const bundleText = bundle.status === 200 ? await bundle.text() : ''
     record('the browser half is served',
-      bundle.status === 200 && bundleText.includes('dgg-group') && bundleText.includes('/api/dsh-git.state'),
+      bundle.status === 200 && bundleText.includes('dgg-page') && bundleText.includes('/api/dsh-git.state'),
+      bundle.status + ' ' + bundleText.length + ' bytes')
+    record('the served bundle is the one using the harness\'s own settings components',
+      bundleText.includes('@deepseek-ai/dsh-client-ui-primitives') && bundleText.includes('SettingsSecretField')
+      && bundleText.includes('SettingsFormModel') && bundleText.includes('/api/dsh-git.trust') === false
+      && bundleText.includes('unlockMode') === false,
       bundle.status + ' ' + bundleText.length + ' bytes')
     record('neither the settings write nor the API touched the patch document',
       read(PATCH) === reference)
-    record('no route ever answered with the token or the passphrase',
+
+    // ---- 7. the uninstall, over the harness's own reload path --------------
+    // This is what `dsh plugin remove` does: the profile manifest drops the
+    // dependency and the package leaves node_modules. HMR watches that manifest,
+    // so the composition recomposes, the plugin unloads, sees its install gone,
+    // and removes everything it owns.
+    const withoutGit = JSON.parse(read(MANIFEST))
+    delete withoutGit.dependencies['dsh-git']
+    withoutGit.dsh.profile.bundles = withoutGit.dsh.profile.bundles.filter((name) => name !== 'dsh-git')
+    fs.writeFileSync(MANIFEST, JSON.stringify(withoutGit, null, 2) + '\n')
+    fs.rmSync(join(PROFILE, 'node_modules', 'dsh-git'), { recursive: true, force: true })
+    record('the uninstall removes the sealed record',
+      await until(() => !fs.existsSync(CREDENTIALS) || !read(CREDENTIALS).includes('dsh-git/github')),
+      fs.existsSync(CREDENTIALS) ? read(CREDENTIALS).slice(0, 200) : 'no document')
+    record('the uninstall removes the key file', await until(() => !fs.existsSync(KEY_FILE)), KEY_FILE)
+    record('the uninstall removes the helper entry it registered',
+      await until(() => {
+        const readback = gitGlobal(['--get-all', 'credential.https://github.com.helper'])
+        return readback.status !== 0 || readback.stdout.includes(HELPER) === false
+      }),
+      JSON.stringify(gitGlobal(['--get-all', 'credential.https://github.com.helper']).stdout))
+    record('the uninstall leaves the operator\'s safe.directory entry standing',
+      gitGlobal(['--get-all', 'safe.directory']).stdout.split('\n').map(line => line.trim()).filter(Boolean)
+        .join(',') === FOREIGN_SAFE_DIRECTORY,
+      JSON.stringify(gitGlobal(['--get-all', 'safe.directory']).stdout))
+    record('the plugin is gone from the composition, so its routes are too',
+      await until(async () => (await call('/api/dsh-git.state')).status !== 200),
+      'the state route still answered after the bundle was removed')
+    record('no route ever answered with the token',
       !answers.some(([, text]) => text.includes(TOKEN))
       && !JSON.stringify(initial).includes(TOKEN) && !JSON.stringify(afterStore).includes(TOKEN))
   } catch (error) {

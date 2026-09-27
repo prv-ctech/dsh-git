@@ -1,6 +1,6 @@
 {
   "name": "dsh-git",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -30,10 +30,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/crypto-check.cjs && node test/socket-check.cjs && node test/host-apply-check.cjs && node test/client-render-check.cjs",
+    "test": "node test/crypto-check.cjs && node test/socket-check.cjs && node test/trust-check.cjs && node test/host-apply-check.cjs && node test/uninstall-check.cjs && node test/client-render-check.cjs",
     "test:crypto": "node test/crypto-check.cjs",
     "test:socket": "node test/socket-check.cjs",
+    "test:trust": "node test/trust-check.cjs",
     "test:host": "node test/host-apply-check.cjs",
+    "test:uninstall": "node test/uninstall-check.cjs",
     "test:client": "node test/client-render-check.cjs",
     "check:pack": "node test/pack-check.cjs",
     "check:boot": "node test/boot-reuse-check.cjs",
