@@ -1,6 +1,6 @@
 {
   "name": "dsh-git",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "GitHub credentials for DeepSeek Harness 0.1.7: an AES-256-GCM sealed token in the native credential record, a Settings card, and a git credential helper over a 0600 unix socket — no third-party dependency in the trust path.",
   "keywords": [
     "cordis",

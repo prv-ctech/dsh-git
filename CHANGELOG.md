@@ -8,6 +8,20 @@ Entries below 1.0 follow [SemVer](https://semver.org/spec/v2.0.0.html): a
 breaking change ships as a **minor** bump, so read a minor as "may need a change
 on your side".
 
+## [0.2.2] - 2026-10-01
+
+### Fixed
+
+- A reload no longer strands the credential socket. `net.Server.close()`
+  unlinks the unix socket file a server bound, and a reload mounts the
+  successor before the predecessor has finished disposing — so the
+  predecessor's close deleted the successor's file. The result was a live
+  listener at a path git could not open (`connect ENOENT .../dsh-git.sock`),
+  which looks exactly like an unsaved token: `git push` falls back to a prompt
+  and fails. Starting a successor now retires the predecessor first, and a
+  superseded predecessor disposes as a no-op. A running instance that has
+  already lost its file cannot be repaired in place; restart `dsh web` once.
+
 ## [0.2.1] - 2026-09-27
 
 No behavioural change. The plugin does what 0.2.0 did; this release carries the

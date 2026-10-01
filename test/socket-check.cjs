@@ -206,6 +206,40 @@ const helper = (args, input, env = {}) =>
   })
   second.stop()
 
+  // A reload mounts the successor before the predecessor finishes disposing.
+  // The predecessor's stop must not unlink a socket it no longer owns: the path
+  // is shared, and an unlinked one is a live listener git can never reach.
+  const predecessor = createCredentialSocket({
+    socketPath,
+    host: 'github.com',
+    username: 'x-access-token',
+    secret: () => TOKEN,
+  })
+  predecessor.start()
+  await sleep(120)
+  const successor = createCredentialSocket({
+    socketPath,
+    host: 'github.com',
+    username: 'x-access-token',
+    secret: () => TOKEN,
+  })
+  successor.start()
+  await sleep(120)
+  predecessor.stop()
+  check('a predecessor stop leaves the successor socket in place', () => {
+    assert.equal(existsSync(socketPath), true, 'the successor socket path was removed')
+  })
+  await checkAsync('the successor still serves after the predecessor stops', async () => {
+    assert.equal(
+      await ask(socketPath, 'protocol=https\nhost=github.com\n\n'),
+      'username=x-access-token\npassword=' + TOKEN + '\n\n',
+    )
+  })
+  successor.stop()
+  check('the successor own stop removes its socket', () => {
+    assert.equal(existsSync(socketPath), false)
+  })
+
   // ---- the helper git runs -------------------------------------------------
   const third = createCredentialSocket({
     socketPath,
